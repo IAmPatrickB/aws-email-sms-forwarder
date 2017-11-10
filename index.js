@@ -3,48 +3,51 @@ var aws = require('aws-sdk');
 var sns = new aws.SNS();
 var s3 = new aws.S3();
 
-// TO-DO:
-// Remove hardcoding of body location
-// Validate base64 detection
-// Validate body location across multiple email providers
-// Validate regex for international numbers
-// Determine desired format for inboud email
-
 exports.handler = (event, context, callback) => {
     var srcBucket = event.Records[0].s3.bucket.name;
     var srcKey    =
     decodeURIComponent(event.Records[0].s3.object.key.replace(/\+/g, " "));
-
+    
     s3.getObject({
         Bucket: srcBucket,
         Key: srcKey
     }, function(err, data) {
         if(err){console.log("Error occured:");
             console.log(err)}
-
+            
+        
         const objectData = data.Body.toString();
-        var textNum = objectData.match(/Subject: ([0-9]{11})/g);
-        textNum = textNum[0].match(/[0-9]{11}/g)[0].toString()
-        var splitEmail = objectData.split("\r\n\r\n");
-        var emailBody = splitEmail[splitEmail.length-5];
-        var base64regex = /^([0-9a-zA-Z+/]{4})*(([0-9a-zA-Z+/]{2}==)|([0-9a-zA-Z+/]{3}=))?$/;
-        var textBody
-        if (base64regex.test(emailBody)){
-            textBody = new Buffer(emailBody, 'base64').toString();
-        } else {
-            textBody = emailBody;
+        var phoneTest=/Subject: ([0-9]{11})/g;
+        var textNum = phoneTest.exec(objectData);
+        
+        var boundTest =/boundary="(.*)"/g;
+        var boundary = boundTest.exec(objectData);
+        var splitEmail = objectData.split("--"+boundary[1]);
+        var body = splitEmail[1];
+        
+
+        var bodyTest =/\r\n\r\n(.*)\r\n\r\n/g;
+        body = bodyTest.exec(body);
+
+        var base64regex = /Content-Transfer-Encoding: base64/;
+        var textBody = body[1];
+        if (base64regex.test(body)){
+            textBody = new Buffer(body[1], 'base64').toString();
         }
+        
         if (textNum === null){
-            var error = "Error: no phone number detected"
-            console.log(error);
-            callback(error, null);
+            console.log("Error: no phone number detected");
+            callback(null, null);
         }
+        
+        console.log("Text Body: "+textBody);
         sns.publish({
             Message:textBody,
-            PhoneNumber:textNum},function(err, data){
-                if(err)
+            PhoneNumber:textNum[1]},function(err, data){
+                if(err){
                     console.log("Error occured:\n"+err);
-                console.log("Text sentsent!");
+                    callback("Error occured");}
+                console.log("Text sent!");
                 callback(null, {"statusCode":200,"headers":{"Date":new Date()},"body":""});
         });
     });
